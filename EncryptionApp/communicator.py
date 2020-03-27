@@ -4,9 +4,24 @@ import logging
 from enum import Enum
 
 from Crypto.Cipher import AES
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QProgressBar
+from PyQt5.QtCore import QThread, pyqtSignal
 
 BYTE_ORDER = 'little'
+
+
+class ReceiverThread(QThread):
+
+    data_received_signal = pyqtSignal(object)
+
+    def __init__(self, communicator):
+        QThread.__init__(self)
+        self.communicator = communicator
+        self.communicator.data_received_signal = self.data_received_signal
+
+    def run(self) -> None:
+        while True:
+            self.communicator.receive()
 
 
 class MessageType(Enum):
@@ -16,11 +31,45 @@ class MessageType(Enum):
 
 
 class Communicator:
-    def __init__(self, conn, buffer_size=32):
-        self.conn = conn
+    def __init__(self, buffer_size=1024):
         self.buffer_size = buffer_size
         self.session_key = os.urandom(32)
+        self.conn = None
+        self.server = None
+        self.receiver_thread = None
+        self.data_received_signal = None
         self.foreign_session_key = None
+
+    def init_connection(self, ip: str, port: int, as_server: bool) -> None:
+        if as_server:
+            self.server = socket.socket()
+            self.server.bind((ip, port))
+            self.server.listen(1)
+            self.conn, _ = self.server.accept()
+            logging.info("Established connection as server")
+            self.send_session_key()
+            self.receive()
+        else:
+            self.conn = socket.socket()
+            self.conn.connect((ip, port))
+            logging.info("Established connection as client")
+            self.receive()
+            self.send_session_key()
+
+        self.receiver_thread = ReceiverThread(self)
+        self.receiver_thread.start()
+
+    def close_connection(self) -> None:
+        if self.receiver_thread:
+            self.receiver_thread.terminate()
+            self.receiver_thread.wait()
+            logging.info("Receiving thread has stopped")
+        if self.conn:
+            self.conn.close()
+            logging.info("Closed connection")
+        if self.server:
+            self.server.close()
+            logging.info("Closed server")
 
     def receive(self) -> None:
         message_type = self.receive_type()
@@ -57,8 +106,9 @@ class Communicator:
             buffer = self.conn.recv(self.buffer_size)
             bytes_received += self.buffer_size
             file.write(buffer)
-
         file.close()
+
+        self.data_received_signal.emit(f"Received file: {file_name}")
         logging.info(f"Received file: {file_name}")
 
     def receive_text(self, length: bytes) -> None:
@@ -70,6 +120,7 @@ class Communicator:
         cipher = AES.new(self.foreign_session_key, AES.MODE_EAX, nonce=nonce)
 
         decrypted_text = cipher.decrypt(encrypted_text)
+        self.data_received_signal.emit(str(decrypted_text, 'utf-8'))
 
         logging.debug(f"Encrypted text: {encrypted_text}")
         logging.debug(f"Cipher nonce: {nonce}")
@@ -95,13 +146,14 @@ class Communicator:
         self.send(self.session_key)
         logging.info(f"Sent session key {self.session_key}")
 
-    def send_file(self, file_name: str, progressbar = None) -> None:
+    def send_file(self, file_path: str, progressbar: QProgressBar = None) -> None:
         self.send(MessageType.FILE.value[0])
+        file_name = os.path.basename(file_path)
         file_name_in_bytes = bytes(file_name, 'utf-8')
         self.send(len(file_name_in_bytes).to_bytes(4, BYTE_ORDER))
         self.send(file_name_in_bytes)
-        file = open(file_name, 'rb')
-        file_size = os.path.getsize(file_name)
+        file = open(file_path, 'rb')
+        file_size = os.path.getsize(file_path)
         self.send(file_size.to_bytes(4, BYTE_ORDER))
 
         bytes_sent = 0
@@ -112,7 +164,7 @@ class Communicator:
             if progressbar:
                 progressbar.setValue(int(bytes_sent/file_size * 100))
                 QApplication.processEvents()
-                logging.info(f"Sent {int(bytes_sent/file_size * 100)}% of file")
+                logging.debug(f"Sent {int(bytes_sent/file_size * 100)}% of file")
         logging.info(f"Sent file: {file_name}")
         file.close()
 
