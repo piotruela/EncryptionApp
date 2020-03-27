@@ -4,6 +4,7 @@ import logging
 from enum import Enum
 
 from Crypto.Cipher import AES
+from PyQt5.QtWidgets import QApplication
 
 BYTE_ORDER = 'little'
 
@@ -15,7 +16,7 @@ class MessageType(Enum):
 
 
 class Communicator:
-    def __init__(self, conn, buffer_size=1024):
+    def __init__(self, conn, buffer_size=32):
         self.conn = conn
         self.buffer_size = buffer_size
         self.session_key = os.urandom(32)
@@ -94,7 +95,7 @@ class Communicator:
         self.send(self.session_key)
         logging.info(f"Sent session key {self.session_key}")
 
-    def send_file(self, file_name: str) -> None:
+    def send_file(self, file_name: str, progressbar = None) -> None:
         self.send(MessageType.FILE.value[0])
         file_name_in_bytes = bytes(file_name, 'utf-8')
         self.send(len(file_name_in_bytes).to_bytes(4, BYTE_ORDER))
@@ -108,6 +109,10 @@ class Communicator:
             buffer = file.read(self.buffer_size)
             self.send(buffer)
             bytes_sent += self.buffer_size
+            if progressbar:
+                progressbar.setValue(int(bytes_sent/file_size * 100))
+                QApplication.processEvents()
+                logging.info(f"Sent {int(bytes_sent/file_size * 100)}% of file")
         logging.info(f"Sent file: {file_name}")
         file.close()
 
