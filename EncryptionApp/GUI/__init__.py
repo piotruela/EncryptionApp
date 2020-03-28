@@ -4,7 +4,7 @@ import os
 from PyQt5 import QtGui
 from PyQt5.QtWidgets import \
     QApplication, QPushButton, QLineEdit, QFileDialog, \
-    QProgressBar, QGridLayout, QWidget, QTextEdit
+    QProgressBar, QGridLayout, QWidget, QTextEdit, QComboBox
 from EncryptionApp.communicator import Communicator
 
 
@@ -20,6 +20,7 @@ class App(QWidget):
         self.message_box = None
         self.filename_box = None
         self.sending_progress = None
+        self.sending_mode = None
         self.chat = None
         self.receiving_progress = None
         self.home()
@@ -60,8 +61,11 @@ class App(QWidget):
         file_button.clicked.connect(self.send_file)
         self.buttons.append(file_button)
         self.sending_progress = QProgressBar(self)
+        self.sending_mode = QComboBox(self)
+        self.sending_mode.addItems(["ECB", "CBC", "CFB", "OFB"])
         layout.addWidget(self.sending_progress, 5, 0, 1, 2)
         layout.addWidget(file_button, 5, 2)
+        layout.addWidget(self.sending_mode, 5, 3)
         self.disable_sending()
 
         self.chat = QTextEdit(self)
