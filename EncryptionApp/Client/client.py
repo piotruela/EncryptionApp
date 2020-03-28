@@ -2,7 +2,7 @@ import logging
 
 from EncryptionApp.GUI import App
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
 def main():

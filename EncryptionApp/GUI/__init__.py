@@ -1,11 +1,13 @@
 import sys
-import os
+import logging
 
 from PyQt5 import QtGui
 from PyQt5.QtWidgets import \
     QApplication, QPushButton, QLineEdit, QFileDialog, \
     QProgressBar, QGridLayout, QWidget, QTextEdit, QComboBox
 from EncryptionApp.communicator import Communicator
+
+logger = logging.getLogger(__name__)
 
 
 class App(QWidget):
@@ -80,18 +82,24 @@ class App(QWidget):
         self.enable_sending()
         self.ip_box.setEnabled(False)
         self.connect_button.setEnabled(False)
+        logger.info("Connected")
 
     def update_chat(self, data: str):
         self.chat.append(data)
+        logger.info(f"Updated chat with value: {data}")
 
     def send_message(self) -> None:
-        self.communicator.send_text(self.message_box.text())
+        message = self.message_box.text()
+        self.communicator.send_text(message, self.sending_mode.currentText())
         self.message_box.clear()
+        logger.info(f"Sent message: {message}")
 
     def send_file(self) -> None:
+        filename = self.filename_box.text()
         self.sending_progress.setValue(0)
-        self.communicator.send_file(self.filename_box.text(), self.sending_progress)
+        self.communicator.send_file(filename, self.sending_progress)
         self.filename_box.clear()
+        logger.info(f"Sent file: {filename}")
 
     def choose_file(self) -> None:
         filename = QFileDialog.getOpenFileName(self, "Open file", "./")
@@ -100,22 +108,21 @@ class App(QWidget):
     def disable_sending(self):
         for send_button in self.buttons:
             send_button.setEnabled(False)
+        logger.info("Disabled sending")
 
     def enable_sending(self):
         for send_button in self.buttons:
             send_button.setEnabled(True)
+        logger.info("Enabled sending")
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         if self.communicator:
             self.communicator.close_connection()
         event.accept()
+        logger.info("Closed app")
 
     @staticmethod
     def run(as_server: bool) -> None:
         app = QApplication(sys.argv)
         _ = App(as_server)
         sys.exit(app.exec_())
-
-
-if __name__ == '__main__':
-    App.run(0)
