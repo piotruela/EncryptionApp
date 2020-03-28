@@ -4,6 +4,7 @@ import logging
 from enum import Enum
 
 from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 from PyQt5.QtWidgets import QApplication, QProgressBar
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -98,12 +99,17 @@ class Communicator:
         file_size = int.from_bytes(file_size, BYTE_ORDER)
         file = open(file_name, 'wb')
 
+        cipher = AES.new(self.foreign_session_key, AES.MODE_ECB)
+
         bytes_received = 0
         while file_size - bytes_received > 0:
             if file_size - bytes_received < self.buffer_size:
-                file.write(self.conn.recv(file_size - bytes_received))
+                buffer = self.conn.recv(self.buffer_size)
+                buffer = unpad(cipher.decrypt(buffer), AES.block_size)
+                file.write(buffer)
                 break
             buffer = self.conn.recv(self.buffer_size)
+            buffer = cipher.decrypt(buffer)
             bytes_received += self.buffer_size
             file.write(buffer)
         file.close()
@@ -112,18 +118,15 @@ class Communicator:
         logging.info(f"Received file: {file_name}")
 
     def receive_text(self, length: bytes) -> None:
-        nonce = self.conn.recv(int.from_bytes(length, BYTE_ORDER))
-        text_len = self.conn.recv(4)
-        text_len = int.from_bytes(text_len, BYTE_ORDER)
+        text_len = int.from_bytes(length, BYTE_ORDER)
         encrypted_text = self.conn.recv(text_len)
 
-        cipher = AES.new(self.foreign_session_key, AES.MODE_EAX, nonce=nonce)
+        cipher = AES.new(self.foreign_session_key, AES.MODE_ECB)
 
-        decrypted_text = cipher.decrypt(encrypted_text)
+        decrypted_text = unpad(cipher.decrypt(encrypted_text), AES.block_size)
         self.data_received_signal.emit(str(decrypted_text, 'utf-8'))
 
         logging.debug(f"Encrypted text: {encrypted_text}")
-        logging.debug(f"Cipher nonce: {nonce}")
         logging.info(f"Received text: {str(decrypted_text, 'utf-8')}")
 
     def route(self, message_type: bytes, message_length: bytes) -> None:
@@ -156,15 +159,20 @@ class Communicator:
         file_size = os.path.getsize(file_path)
         self.send(file_size.to_bytes(4, BYTE_ORDER))
 
+        cipher = AES.new(self.session_key, AES.MODE_ECB)
+
         bytes_sent = 0
         while file_size - bytes_sent > 0:
             buffer = file.read(self.buffer_size)
-            self.send(buffer)
+            if len(buffer) % AES.block_size != 0:
+                buffer = pad(buffer, AES.block_size)
+            self.send(cipher.encrypt(buffer))
             bytes_sent += self.buffer_size
             if progressbar:
-                progressbar.setValue(int(bytes_sent/file_size * 100))
+                progress = min(int(bytes_sent/file_size * 100), 100)
+                progressbar.setValue(progress)
                 QApplication.processEvents()
-                logging.debug(f"Sent {int(bytes_sent/file_size * 100)}% of file")
+                logging.debug(f"Sent {progress}% of file")
         logging.info(f"Sent file: {file_name}")
         file.close()
 
@@ -172,17 +180,11 @@ class Communicator:
         self.send(MessageType.TEXT.value[0])
         text_in_bytes = bytes(text, 'utf-8')
 
-        cipher = AES.new(self.session_key, AES.MODE_EAX)
-
-        encrypted_text = cipher.encrypt(text_in_bytes)
-        nonce = cipher.nonce
-
-        self.send(len(nonce).to_bytes(4, BYTE_ORDER))
-        self.send(nonce)
+        cipher = AES.new(self.session_key, AES.MODE_ECB)
+        encrypted_text = cipher.encrypt(pad(text_in_bytes, AES.block_size))
 
         self.send(len(encrypted_text).to_bytes(4, BYTE_ORDER))
         self.send(encrypted_text)
 
         logging.debug(f"Encrypted text: {encrypted_text}")
-        logging.debug(f"Cipher nonce: {nonce}")
         logging.info(f"Sent text: {text}")
