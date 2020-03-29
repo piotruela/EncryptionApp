@@ -107,7 +107,6 @@ class Communicator:
         while file_size - bytes_received > 0:
             buffer = self.conn.recv(self.buffer_size)
             bytes_received += len(buffer)
-            # bytes_received += self.buffer_size
             logger.debug(f"Recieved {bytes_received}/{file_size}. Last buffer size: {len(buffer)}")
             temp_file.write(buffer)
 
@@ -192,7 +191,6 @@ class Communicator:
             if mode in ["ECB", "CBC"] and len(buffer) % AES.block_size != 0:
                 buffer = pad(buffer, AES.block_size)
             bytes_sent += self.send(cipher.encrypt(buffer))
-            # bytes_sent += self.buffer_size
             if progressbar:
                 progress = min(int(bytes_sent / file_size * 100), 100)
                 progressbar.setValue(progress)
