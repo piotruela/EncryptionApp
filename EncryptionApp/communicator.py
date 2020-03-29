@@ -106,7 +106,8 @@ class Communicator:
         bytes_received = 0
         while file_size - bytes_received > 0:
             buffer = self.conn.recv(self.buffer_size)
-            bytes_received += self.buffer_size
+            bytes_received += len(buffer)
+            # bytes_received += self.buffer_size
             logger.debug(f"Recieved {bytes_received}/{file_size}. Last buffer size: {len(buffer)}")
             temp_file.write(buffer)
 
@@ -151,9 +152,9 @@ class Communicator:
         mode = self.receive_bytes()
         return str(mode, 'utf-8')
 
-    def send(self, data: bytes) -> None:
+    def send(self, data: bytes) -> int:
         if self.conn:
-            self.conn.send(data)
+            return self.conn.send(data)
         else:
             logger.error("Couldn't sent data, because there is no client connection")
 
@@ -190,8 +191,8 @@ class Communicator:
             buffer = file.read(self.buffer_size)
             if mode in ["ECB", "CBC"] and len(buffer) % AES.block_size != 0:
                 buffer = pad(buffer, AES.block_size)
-            self.send(cipher.encrypt(buffer))
-            bytes_sent += self.buffer_size
+            bytes_sent += self.send(cipher.encrypt(buffer))
+            # bytes_sent += self.buffer_size
             if progressbar:
                 progress = min(int(bytes_sent / file_size * 100), 100)
                 progressbar.setValue(progress)
