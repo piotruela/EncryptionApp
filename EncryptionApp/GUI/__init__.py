@@ -90,16 +90,18 @@ class App(QWidget):
 
     def send_message(self) -> None:
         message = self.message_box.text()
-        self.communicator.send_text(message, self.sending_mode.currentText())
+        mode = self.sending_mode.currentText()
+        self.communicator.send_text(message, mode)
         self.message_box.clear()
-        logger.info(f"Sent message: {message}")
+        logger.info(f"Sent message: {message}. Mode: {mode}")
 
     def send_file(self) -> None:
         filename = self.filename_box.text()
+        mode = self.sending_mode.currentText()
         self.sending_progress.setValue(0)
-        self.communicator.send_file(filename, self.sending_progress)
+        self.communicator.send_file(filename, mode, self.sending_progress)
         self.filename_box.clear()
-        logger.info(f"Sent file: {filename}")
+        logger.info(f"Sent file: {filename}. Mode: {mode}")
 
     def choose_file(self) -> None:
         filename = QFileDialog.getOpenFileName(self, "Open file", "./")

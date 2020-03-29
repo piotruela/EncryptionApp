@@ -1,37 +1,22 @@
 import os
 import socket
 import logging
-from enum import Enum
+from tempfile import TemporaryFile
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from PyQt5.QtWidgets import QApplication, QProgressBar
-from PyQt5.QtCore import QThread, pyqtSignal
 
-BYTE_ORDER = 'little'
+from EncryptionApp.receiver_thread import ReceiverThread
+import EncryptionApp.message_type as msg_type
+from EncryptionApp.message_type import MessageType
+from EncryptionApp import cipher_utils
+
+BYTE_ORDER = msg_type.BYTE_ORDER
 KEY_SIZE = 32
 AES.block_size = 16
 
 logger = logging.getLogger(__name__)
-
-
-class ReceiverThread(QThread):
-    data_received_signal = pyqtSignal(object)
-
-    def __init__(self, communicator):
-        QThread.__init__(self)
-        self.communicator = communicator
-        self.communicator.data_received_signal = self.data_received_signal
-
-    def run(self) -> None:
-        while True:
-            self.communicator.listen()
-
-
-class MessageType(Enum):
-    SESSION_KEY = int(1).to_bytes(4, BYTE_ORDER),
-    FILE = int(2).to_bytes(4, BYTE_ORDER),
-    TEXT = int(3).to_bytes(4, BYTE_ORDER),
 
 
 class Communicator:
@@ -111,47 +96,44 @@ class Communicator:
         data = self.conn.recv(length)
         return data
 
-    def receive_file(self) -> None:
+    @cipher_utils.get_mode_and_cipher_to_receive
+    def receive_file(self, mode, cipher) -> None:
         file_name = self.receive_bytes()
         file_name = str(file_name, 'utf-8')
         file_size = self.receive_length()
-        file = open(file_name, 'wb')
-
-        cipher = AES.new(self.foreign_session_key, AES.MODE_ECB)
+        temp_file = TemporaryFile()
 
         bytes_received = 0
         while file_size - bytes_received > 0:
-            if file_size - bytes_received < self.buffer_size:
-                buffer = self.conn.recv(self.buffer_size)
-                buffer = unpad(cipher.decrypt(buffer), AES.block_size)
+            buffer = self.conn.recv(self.buffer_size)
+            bytes_received += self.buffer_size
+            temp_file.write(buffer)
+
+        temp_file.seek(0)
+
+        file = open(file_name, 'wb')
+
+        bytes_decrypt = 0
+        while file_size - bytes_decrypt > 0:
+            if file_size - bytes_decrypt < self.buffer_size:
+                buffer = temp_file.read(self.buffer_size)
+                buffer = cipher.decrypt(buffer)
+                if mode in ["ECB", "CBC"]:
+                    buffer = unpad(buffer, AES.block_size)
                 file.write(buffer)
                 break
-            buffer = self.conn.recv(self.buffer_size)
+            buffer = temp_file.read(self.buffer_size)
             buffer = cipher.decrypt(buffer)
-            bytes_received += self.buffer_size
+            bytes_decrypt += self.buffer_size
             file.write(buffer)
         file.close()
+        temp_file.close()
 
         self.data_received_signal.emit(f"Received file: {file_name}")
-        logger.info(f"Received file: {file_name}")
+        logger.info(f"Received file: {file_name}. Mode: {mode}")
 
-    def receive_text(self) -> None:
-        mode = self.receive_mode()
-
-        if mode == "ECB":
-            cipher = AES.new(self.foreign_session_key, AES.MODE_ECB)
-        elif mode == "CBC":
-            iv = self.receive_bytes()
-            cipher = AES.new(self.foreign_session_key, AES.MODE_CBC, iv=iv)
-        elif mode == "CFB":
-            iv = self.receive_bytes()
-            cipher = AES.new(self.foreign_session_key, AES.MODE_CFB, iv=iv)
-        elif mode == "OFB":
-            iv = self.receive_bytes()
-            cipher = AES.new(self.foreign_session_key, AES.MODE_OFB, iv=iv)
-        else:
-            raise BaseException("No such sending mode")
-
+    @cipher_utils.get_mode_and_cipher_to_receive
+    def receive_text(self, mode, cipher) -> None:
         encrypted_text = self.receive_bytes()
         decrypted_text = cipher.decrypt(encrypted_text)
 
@@ -161,8 +143,7 @@ class Communicator:
         self.data_received_signal.emit(str(decrypted_text, 'utf-8'))
 
         logger.debug(f"Received encrypted text: {encrypted_text}")
-        logger.debug(f"Receibed in mode: {mode}")
-        logger.info(f"Received text: {str(decrypted_text, 'utf-8')}")
+        logger.info(f"Received text: {str(decrypted_text, 'utf-8')}. Mode: {mode}")
 
     def receive_mode(self) -> str:
         mode = self.receive_bytes()
@@ -183,8 +164,12 @@ class Communicator:
         self.send_bytes(self.session_key)
         logger.debug(f"Sent session key {self.session_key}")
 
-    def send_file(self, file_path: str, progressbar: QProgressBar = None) -> None:
+    def send_file(self, file_path: str, mode: str, progressbar: QProgressBar = None) -> None:
         self.send(MessageType.FILE.value[0])
+        self.send_mode(mode)
+
+        cipher = self.get_cipher_to_encrypt(mode)
+
         file_name = os.path.basename(file_path)
         file_name_in_bytes = bytes(file_name, 'utf-8')
         self.send_bytes(file_name_in_bytes)
@@ -194,16 +179,14 @@ class Communicator:
         except FileNotFoundError:
             file = None
             file_size = 0
-            logger.debug(f"Sending empty file due to fact, becuase file {file_path} doesn't exist.")
+            logger.debug(f"Sending empty file due to fact, because file {file_path} does not exist.")
 
         self.send(file_size.to_bytes(4, BYTE_ORDER))
-
-        cipher = AES.new(self.session_key, AES.MODE_ECB)
 
         bytes_sent = 0
         while file_size - bytes_sent > 0:
             buffer = file.read(self.buffer_size)
-            if len(buffer) % AES.block_size != 0:
+            if mode in ["ECB", "CBC"] and len(buffer) % AES.block_size != 0:
                 buffer = pad(buffer, AES.block_size)
             self.send(cipher.encrypt(buffer))
             bytes_sent += self.buffer_size
@@ -213,40 +196,43 @@ class Communicator:
                 QApplication.processEvents()
                 logger.debug(f"Sent {progress}% of file")
         progressbar.setValue(100)
+
         if file:
             file.close()
-        logger.info(f"Sent file: {file_name}")
+        logger.info(f"Sent file: {file_name}. Mode: {mode}")
 
     def send_text(self, text: str, mode: str) -> None:
         self.send(MessageType.TEXT.value[0])
-        text_in_bytes = bytes(text, 'utf-8')
-
         self.send_mode(mode)
 
-        if mode == "ECB":
-            cipher = AES.new(self.session_key, AES.MODE_ECB)
-            encrypted_text = cipher.encrypt(pad(text_in_bytes, AES.block_size))
-        elif mode == "CBC":
-            cipher = AES.new(self.session_key, AES.MODE_CBC)
-            encrypted_text = cipher.encrypt(pad(text_in_bytes, AES.block_size))
-            self.send_bytes(cipher.iv)
-        elif mode == "CFB":
-            cipher = AES.new(self.session_key, AES.MODE_CFB)
-            encrypted_text = cipher.encrypt(text_in_bytes)
-            self.send_bytes(cipher.iv)
-        elif mode == "OFB":
-            cipher = AES.new(self.session_key, AES.MODE_OFB)
-            encrypted_text = cipher.encrypt(text_in_bytes)
-            self.send_bytes(cipher.iv)
-        else:
-            raise BaseException("No such sending mode")
+        cipher = self.get_cipher_to_encrypt(mode)
 
+        text_in_bytes = bytes(text, 'utf-8')
+
+        if mode in ["ECB", "CBC"]:
+            text_in_bytes = pad(text_in_bytes, AES.block_size)
+        encrypted_text = cipher.encrypt(text_in_bytes)
         self.send_bytes(encrypted_text)
 
-        logger.debug(f"Sent encrypted text: {encrypted_text}")
-        logger.debug(f"Sent in mode: {mode}")
-        logger.info(f"Sent text: {text}")
+        logger.debug(f"Sent encrypted text: {encrypted_text}.")
+        logger.info(f"Sent text: {text}. Mode: {mode}")
 
     def send_mode(self, mode: str) -> None:
         mode_in_bytes = bytes(mode, 'utf-8')
         self.send_bytes(mode_in_bytes)
+
+    def get_cipher_to_encrypt(self, mode: str) -> AES:
+        if mode == "ECB":
+            cipher = AES.new(self.session_key, AES.MODE_ECB)
+        elif mode == "CBC":
+            cipher = AES.new(self.session_key, AES.MODE_CBC)
+            self.send_bytes(cipher.iv)
+        elif mode == "CFB":
+            cipher = AES.new(self.session_key, AES.MODE_CFB)
+            self.send_bytes(cipher.iv)
+        elif mode == "OFB":
+            cipher = AES.new(self.session_key, AES.MODE_OFB)
+            self.send_bytes(cipher.iv)
+        else:
+            raise BaseException("No such sending mode")
+        return cipher
