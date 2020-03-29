@@ -107,6 +107,7 @@ class Communicator:
         while file_size - bytes_received > 0:
             buffer = self.conn.recv(self.buffer_size)
             bytes_received += self.buffer_size
+            logger.debug(f"Recieved {bytes_received}/{file_size}. Last buffer size: {len(buffer)}")
             temp_file.write(buffer)
 
         temp_file.seek(0)
@@ -125,6 +126,7 @@ class Communicator:
             buffer = temp_file.read(self.buffer_size)
             buffer = cipher.decrypt(buffer)
             bytes_decrypt += self.buffer_size
+            logger.debug(f"Decrypt {bytes_decrypt}/{file_size}")
             file.write(buffer)
         file.close()
         temp_file.close()
@@ -194,7 +196,7 @@ class Communicator:
                 progress = min(int(bytes_sent / file_size * 100), 100)
                 progressbar.setValue(progress)
                 QApplication.processEvents()
-                logger.debug(f"Sent {progress}% of file")
+                logger.debug(f"Sent {bytes_sent}/{file_size} of file")
         progressbar.setValue(100)
 
         if file:
