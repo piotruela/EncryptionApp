@@ -118,7 +118,7 @@ class Communicator:
             if file_size - bytes_decrypt < self.buffer_size:
                 buffer = temp_file.read(self.buffer_size)
                 buffer = cipher.decrypt(buffer)
-                if mode in ["ECB", "CBC"]:
+                if (file_size - bytes_decrypt) % AES.block_size != 0 and mode in ["ECB", "CBC"]:
                     buffer = unpad(buffer, AES.block_size)
                 file.write(buffer)
                 break
