@@ -1,5 +1,7 @@
+import sys
 import logging
-import threading
+
+sys.path.append("/Users/hubertskrzypczak/PycharmProjects/BSK_1/")
 
 from EncryptionApp.GUI import App
 
