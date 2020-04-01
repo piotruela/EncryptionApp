@@ -6,6 +6,10 @@ from tempfile import TemporaryFile
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from PyQt5.QtWidgets import QApplication, QProgressBar
+from Crypto.PublicKey import RSA
+from Crypto import Random
+from Crypto.Hash import SHA256
+from Crypto.Cipher import AES
 
 from EncryptionApp.receiver_thread import ReceiverThread
 import EncryptionApp.message_type as msg_type
@@ -24,14 +28,17 @@ class Communicator:
         if buffer_size % AES.block_size != 0:
             raise BaseException(f"buffer_size must be divisible by AES.block_size = {AES.block_size}")
         self.buffer_size = buffer_size
+        self.private_key, self.public_key = self.generate_keys()
         self.session_key = os.urandom(KEY_SIZE)
         self.routing_table = {MessageType.SESSION_KEY.value[0]: self.receive_session_key,
                               MessageType.FILE.value[0]: self.receive_file,
-                              MessageType.TEXT.value[0]: self.receive_text}
+                              MessageType.TEXT.value[0]: self.receive_text,
+                              MessageType.PUBLIC_KEY.value[0]: self.receive_public_key}
         self.conn = None
         self.server = None
         self.receiver_thread = None
         self.data_received_signal = None
+        self.foreign_public_key = None
         self.foreign_session_key = None
 
     def init_connection(self, ip: str, port: int, as_server: bool) -> None:
@@ -40,12 +47,16 @@ class Communicator:
             self.server.bind((ip, port))
             self.server.listen(1)
             self.conn, _ = self.server.accept()
+            self.send_public_key()
+            self.listen()
             self.send_session_key()
             self.listen()
             logger.info("Established connection as server")
         else:
             self.conn = socket.socket()
             self.conn.connect((ip, port))
+            self.listen()
+            self.send_public_key()
             self.listen()
             self.send_session_key()
             logger.info("Established connection as client")
@@ -85,6 +96,11 @@ class Communicator:
         message_length = int.from_bytes(self.conn.recv(4), BYTE_ORDER)
         logger.debug(f"Received length: {message_length}")
         return message_length
+
+    def receive_public_key(self) -> None:
+        key = self.receive_bytes()
+        self.foreign_session_key = RSA.import_key(key)
+        logger.debug(f"Received public key: {key}")
 
     def receive_session_key(self) -> None:
         key = self.receive_bytes()
@@ -160,6 +176,11 @@ class Communicator:
     def send_bytes(self, data: bytes) -> None:
         self.send(len(data).to_bytes(4, BYTE_ORDER))
         self.send(data)
+
+    def send_public_key(self) -> None:
+        self.send(MessageType.PUBLIC_KEY.value[0])
+        self.send_bytes(self.public_key.exportKey())
+        logger.debug(f"Sent public key {self.session_key}")
 
     def send_session_key(self) -> None:
         self.send(MessageType.SESSION_KEY.value[0])
@@ -237,3 +258,60 @@ class Communicator:
         else:
             raise BaseException("No such sending mode")
         return cipher
+
+    def generate_keys(self):
+        random_generator = Random.new().read
+        key = RSA.generate(1024, random_generator)
+        return key, key.publickey()
+
+    '''def encrypt_key(self, key):
+        user_password = input("Insert password which will be used to encrypt a key:")
+        user_password_byte_array = user_password.encode("utf8")
+        hashed_user_password = SHA256.new(user_password_byte_array)  # create a hash of password set by user
+        initialisation_vector = Random.new().read(AES.block_size)  # create initialisation vector
+        cipher = AES.new(hashed_user_password.digest(), AES.MODE_CBC, initialisation_vector)
+        length = 16 - (len(key) % 16)
+        key += bytes([length]) * length
+        encrypted_key = cipher.encrypt(key)
+        return encrypted_key, initialisation_vector
+
+    def decrypt_key(self, encrypted_key, initialisation_vector):
+        password = input("Insert password protecting key:")
+        password_byte_array = password.encode("utf8")
+        hashed_password = SHA256.new(password_byte_array)
+        cipher_to_decrypt = AES.new(hashed_password.digest(), AES.MODE_CBC, initialisation_vector)
+        decrypted_key = cipher_to_decrypt.decrypt(encrypted_key)
+        decrypted_key = decrypted_key[:-decrypted_key[-1]]
+        return decrypted_key
+
+    def save_key(self, key: RSA.RsaKey):
+        if key.has_private():
+            filename = os.getcwd() + "/keys/private_key/private_key.txt"
+        else:
+            filename = os.getcwd() + "/keys/public_key/public_key.txt"
+        key, vector = self.encrypt_key(key.exportKey())
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "wb") as f:
+            f.write(key)
+            f.write(vector)
+            f.close()
+
+    def read_key(self, is_private: bool):
+        if is_private:
+            filename = "/keys/private_key/private_key.txt"
+        else:
+            filename = "/keys/public_key/public_key.txt"
+        with open(os.getcwd() + filename, "rb") as f:
+            content = f.read()
+            key = content[:-16]
+            vector = content[-16:]
+            f.close()
+        try:
+            key = self.decrypt_key(key, vector)
+            return RSA.import_key(key)
+        except ValueError:
+            private, public = self.generate_keys()
+            if is_private:
+                return private
+            else:
+                return public'''
