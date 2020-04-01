@@ -49,6 +49,8 @@ class Communicator:
             self.conn, _ = self.server.accept()
             self.send_public_key()
             self.listen()
+            self.save_key(self.private_key)
+            self.save_key(self.foreign_public_key)
             self.send_session_key()
             self.listen()
             logger.info("Established connection as server")
@@ -264,8 +266,8 @@ class Communicator:
         key = RSA.generate(1024, random_generator)
         return key, key.publickey()
 
-    '''def encrypt_key(self, key):
-        user_password = input("Insert password which will be used to encrypt a key:")
+    def encrypt_key(self, key):
+        user_password = input("Insert password which will be used to protect a private key:")
         user_password_byte_array = user_password.encode("utf8")
         hashed_user_password = SHA256.new(user_password_byte_array)  # create a hash of password set by user
         initialisation_vector = Random.new().read(AES.block_size)  # create initialisation vector
@@ -284,11 +286,15 @@ class Communicator:
         decrypted_key = decrypted_key[:-decrypted_key[-1]]
         return decrypted_key
 
-    def save_key(self, key: RSA.RsaKey):
-        if key.has_private():
-            filename = os.getcwd() + "/keys/private_key/private_key.txt"
-        else:
-            filename = os.getcwd() + "/keys/public_key/public_key.txt"
+    def save_public_key(self, key:RSA.RsaKey):
+        filename = os.getcwd() + "/keys/public_key/public_key.txt"
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "wb") as f:
+            f.write(key.exportKey())
+            f.close()
+
+    def save_private_key(self, key: RSA.RsaKey):
+        filename = os.getcwd() + "/keys/private_key/private_key.txt"
         key, vector = self.encrypt_key(key.exportKey())
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, "wb") as f:
@@ -296,11 +302,15 @@ class Communicator:
             f.write(vector)
             f.close()
 
-    def read_key(self, is_private: bool):
-        if is_private:
-            filename = "/keys/private_key/private_key.txt"
-        else:
-            filename = "/keys/public_key/public_key.txt"
+    def read_public_key(self):
+        filename = "/keys/public_key/public_key.txt"
+        with open(os.getcwd() + filename, "rb") as f:
+            content = f.read()
+            f.close()
+            return content
+
+    def read_private_key(self):
+        filename = "/keys/private_key/private_key.txt"
         with open(os.getcwd() + filename, "rb") as f:
             content = f.read()
             key = content[:-16]
@@ -310,8 +320,5 @@ class Communicator:
             key = self.decrypt_key(key, vector)
             return RSA.import_key(key)
         except ValueError:
-            private, public = self.generate_keys()
-            if is_private:
-                return private
-            else:
-                return public'''
+            random_generator = Random.new().read
+            return RSA.generate(1024, random_generator)
