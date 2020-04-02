@@ -50,9 +50,10 @@ class Communicator:
             self.listen()
             self.send_public_key()
             self.save_public_key(self.foreign_public_key)
-            self.save_private_key(self.private_key)
+            # self.save_private_key(self.private_key)
             self.listen()
             self.send_session_key()
+            self.send_info(self.foreign_public_key.exportKey())
             logger.info("Established connection as server")
         else:
             self.conn = socket.socket()
@@ -60,9 +61,10 @@ class Communicator:
             self.send_public_key()
             self.listen()
             self.save_public_key(self.foreign_public_key)
-            self.save_private_key(self.private_key)
+            # self.save_private_key(self.private_key)
             self.send_session_key()
             self.listen()
+            self.public_key = self.receive_info()
             logger.info("Established connection as client")
 
         self.receiver_thread = ReceiverThread(self)
@@ -90,6 +92,15 @@ class Communicator:
         except KeyError:
             logger.debug(f"No such key in routing_table. ({message_type})")
             exit(0)
+
+    def receive_info(self) -> bytes:
+        encrypted_info = self.conn.recv(128)
+        decrypted_info = PKCS1_OAEP.new(self.private_key).decrypt(encrypted_info)
+        message_type = decrypted_info[:3]
+        message_length = decrypted_info[4:]
+        logger.debug(f"Type: {int.from_bytes(message_type, BYTE_ORDER)}")
+        logger.debug(f"Received length: {int.from_bytes(message_length, BYTE_ORDER)}")
+        return message_type
 
     def receive_type(self) -> bytes:
         message_type = self.conn.recv(4)
@@ -176,6 +187,11 @@ class Communicator:
             return self.conn.send(data)
         else:
             logger.error("Couldn't sent data, because there is no client connection")
+
+    def send_info(self, data: bytes) -> None:
+        info = MessageType.PUBLIC_KEY.value[0] + len(data).to_bytes(4, BYTE_ORDER)
+        encrypted_info = PKCS1_OAEP.new(self.foreign_public_key).encrypt(info)
+        self.send(encrypted_info)
 
     def send_bytes(self, data: bytes) -> None:
         self.send(len(data).to_bytes(4, BYTE_ORDER))
