@@ -49,6 +49,8 @@ class Communicator:
             self.conn, _ = self.server.accept()
             self.listen()
             self.send_public_key()
+            self.save_public_key(self.foreign_public_key)
+            self.save_private_key(self.private_key)
             self.listen()
             self.send_session_key()
             logger.info("Established connection as server")
@@ -57,6 +59,8 @@ class Communicator:
             self.conn.connect((ip, port))
             self.send_public_key()
             self.listen()
+            self.save_public_key(self.foreign_public_key)
+            self.save_private_key(self.private_key)
             self.send_session_key()
             self.listen()
             logger.info("Established connection as client")
@@ -286,7 +290,6 @@ class Communicator:
         return decrypted_key
 
     def save_public_key(self, key: RSA.RsaKey):
-        print(key.exportKey())
         filename = os.getcwd() + "/keys/public_key/public_key.txt"
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, "wb") as f:
